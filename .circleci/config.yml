@@ -1,0 +1,122 @@
+version: 2.1
+
+orbs:
+  aws-assume: airswap/assume-role@0.2.0
+  aws-s3: circleci/aws-s3@1.0.13
+
+executors:
+  py-builder:
+    docker:
+      - image: python:3.9.4-slim
+  gcp-builder:
+    docker:
+      - image: eu.gcr.io/${GCP_PROJECT}/go-builder:latest
+        auth:
+          username: _json_key
+          password: ${GCLOUD_SERVICE_KEY}
+
+jobs:
+  test:
+    executor: py-builder
+    working_directory: /opt
+    steps:
+      - checkout
+
+      - run:
+          name: Install
+          command: |
+            apt-get update -yqq \
+            && apt-get update -yqq \
+            && apt-get install -yqq python3-pip libpython-dev jq \
+            && apt-get install -yqq --no-install-recommends \
+                build-essential
+            make install
+
+      - run:
+          name: Unit tests
+          command: |
+            make test
+
+      - run:
+          name: Lint
+          command: make lint
+
+      - run:
+          name:  max used memory in bytes
+          command: cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes
+          when: always
+
+  build-docker:
+    executor: gcp-builder
+    working_directory: /opt
+    steps:
+      - checkout
+
+      - attach_workspace:
+          at: /opt/ur_models
+
+      - setup_remote_docker
+
+      - run:
+          name: Install dependencies
+          command: |
+            curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+            apt-get update -yqq && \
+            apt-get install -yqq jq
+            pip install awscli
+
+      - run:
+          name : Authenticate to google
+          command: |
+            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+            gcloud --quiet config set project ${GCP_PROJECT}
+            gcloud auth configure-docker
+
+      - run:
+          name : Create helm package
+          command: |
+            mkdir -p helm/${SERVICE}
+            gsutil cp gs://cytora-service-versions/helm-template/helm-template-latest.tgz ./helm/
+            tar -xzvf ./helm/helm-template-latest.tgz -C ./helm/${SERVICE}
+            make helm
+
+      - run:
+          name: Docker build
+          command: |
+            docker build --tag eu.gcr.io/${GCP_PROJECT}/${SERVICE}:${CIRCLE_BUILD_NUM} --build-arg GEMFURY_TOKEN=${GEMFURY_TOKEN} .
+
+      - run:
+          name: Docker build component-tests
+          command: |
+            docker build --tag eu.gcr.io/${GCP_PROJECT}/${SERVICE}-component-tests:latest --build-arg GEMFURY_TOKEN=${GEMFURY_TOKEN} component-tests
+
+      - run:
+          name: Publish to google container registry
+          command: |
+            docker push eu.gcr.io/${GCP_PROJECT}/${SERVICE}:${CIRCLE_BUILD_NUM}
+            docker push eu.gcr.io/${GCP_PROJECT}/${SERVICE}-component-tests:latest
+
+      - run:
+          name : Push helm package and version to gcs
+          command: |
+            echo "0.0.${CIRCLE_BUILD_NUM}" > service-version
+            gsutil cp service-version gs://cytora-service-versions/${SERVICE}/
+            gsutil cp "./helm/${SERVICE}-0.0.${CIRCLE_BUILD_NUM}.tgz" gs://cytora-service-versions/${SERVICE}/
+
+      - run:
+          name:  max used memory in bytes
+          command: cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes
+          when: always          
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - test
+      - build-docker:
+          requires:
+            - test
+          filters:
+            branches:
+              only:
+                - main
