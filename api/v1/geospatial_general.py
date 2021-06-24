@@ -1,6 +1,7 @@
 import psycopg2
 from psycopg2 import Error
-
+import ast
+import json
 from fastapi import APIRouter
 from typing import Optional
 
@@ -78,7 +79,7 @@ class PostgresConfiguration():
         )
 
 
-@router.get('/discovery/data')
+@router.get('/discovery/layers')
 async def get_discovery():
     '''
     purpose: function discover available GeoSpatial Layers/Tables for query/search.
@@ -131,12 +132,23 @@ async def get_discovery():
             cur.execute(srid)
             srd = cur.fetchall()
 
-            count = f'''SELECT count(1) from {el['gis_layer']};'''
-            cur.execute(count)
-            cnt = cur.fetchall()
+            #count = f'''SELECT count(1) from {el['gis_layer']};'''
+            #cur.execute(count)
+            #cnt = cur.fetchall()
+
+            geom_type = f'''SELECT count(1), ST_GeometryType(geom) as geom_type
+                from {el['gis_layer']}
+                group by ST_GeometryType(geom);'''
+            geom_typ = select_query_dict(con, geom_type)
+
+            ext_sql = f'''SELECT ST_AsGeoJSON(ST_Extent(geom)) as extent FROM {el['gis_layer']};'''
+            ext = select_query_dict(con, ext_sql)
 
             el['srid'] = srd[0][0]
-            el['count'] = cnt[0][0]
+            # el['count'] = cnt[0][0]
+            el['geometry'] = geom_typ[0]
+            d = ast.literal_eval(ext[0]['extent'])
+            el['extent'] = d
 
     obj = {}
     obj['layers'] = res
@@ -144,8 +156,8 @@ async def get_discovery():
     return obj
 
 
-@router.get('/intersect/{lat}/{lon}/{lyr}')
-async def get_intersection(lat: float, lon: float, lyr: str):
+@router.get('/intersect/')
+async def get_intersection(latitude: float, longitude: float, layer: str):
     '''
     purpose: Find Intersection/drill down between caller provided lat, lon and feature layer name
     example
@@ -172,19 +184,24 @@ async def get_intersection(lat: float, lon: float, lyr: str):
     '''
     sql = f'''
     SELECT
+    -- ST_AsGeoJSON(geom) as g,
     *
-    FROM {lyr}
-    WHERE ST_Intersects(geom, 'SRID=4326;POINT({lon} {lat})');
+    FROM {layer}
+    WHERE ST_Intersects(geom, 'SRID=4326;POINT({longitude} {latitude})');
     '''
     start = time.perf_counter()
     with PostgresConfiguration().pg2 as con:
         res = select_query_dict(con, sql)
 
+    #geometry = None
     for el in res:
+        #geometry = el['g']
         del el['geom']
+        #del el['g']
 
     obj = {}
-    obj['request'] = {'lat': lat, 'lon': lon, 'layer': lyr}
+    obj['request'] = {'lat': latitude, 'lon': longitude, 'layer': layer}
     obj['response'] = res
+    #obj['response'].append(ast.literal_eval(geometry))
     obj['exec_time_seconds'] = f'{time.perf_counter() - start}'
     return obj
