@@ -21,10 +21,8 @@ ENV APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=allisgood
 RUN set -ex apt-get update -yqq && \
     apt-get upgrade -yqq && \
     apt-get install \
-        apt-utils \
         gcc \
         g++ \
-        libc-dev \
         jq \
         curl \
         apt-transport-https \
