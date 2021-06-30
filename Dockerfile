@@ -18,8 +18,8 @@ ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 
 ENV APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=allisgood
-RUN set -ex apt-get update -yqq && \
-    apt-get upgrade -yqq && \
+RUN apt-get update -y && \
+    apt-get upgrade -y && \
     apt-get install \
         gcc \
         g++ \
