@@ -2,9 +2,6 @@
 
 import pytest
 
-from models.responses import MatchResponse
-from service.handler import matcher
-
 '''
 @pytest.mark.parametrize("match, expected", [
     (
