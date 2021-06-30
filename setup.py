@@ -39,6 +39,7 @@ setup(
         'datadog==0.41.0',
         'py-platform-utils[app-sanic]==0.0.24',
         'pydantic==1.8.1',
+        'psycopg2-binary==2.9.1',
     ],
     dependency_links=[
         'git+ssh://git@github.com/cytora/py-platform-utils@0.0.24#egg=py-platform-utils-0.0.24',
