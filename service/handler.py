@@ -2,8 +2,6 @@
 """REST wrapper for resolve service"""
 import asyncio
 from typing import Any, Dict, Optional
-import io
-from datetime import datetime
 
 # import py_platform_utils.bi_publisher as bi
 from py_platform_utils.config import Config
@@ -19,16 +17,13 @@ import logging
 import os
 import time
 
-#logger = logging.getLogger()
-#logger.setLevel(logging.DEBUG)
-
 
 class PostgresConfiguration():
-    POSTGRESQL_DB_PORT = 5432 #os.getenv('POSTGRES_PORT', 5432)
-    POSTGRESQL_DB_NAME = 'cytora_data_rds' #os.getenv('POSTGRES_DB', 'cytora_data_rds')
-    POSTGRESQL_DB_USER = 'geo' # os.getenv('POSTGRES_USER', 'geo')
-    POSTGRESQL_DB_PASSWORD = 'TGL2022!!' # os.getenv('POSTGRES_PASSWORD', 'TGL2022!!')
-    POSTGRESQL_DB_HOST = 'dev-postgres-11.c5xohzyav5el.eu-west-1.rds.amazonaws.com' # os.getenv('POSTGRES_ADDRESS', 'dev-postgres-11.c5xohzyav5el.eu-west-1.rds.amazonaws.com')
+    POSTGRESQL_DB_PORT = os.getenv('POSTGRESQL_DB_PORT')
+    POSTGRESQL_DB_NAME = os.getenv('POSTGRESQL_DB_NAME')
+    POSTGRESQL_DB_USER = os.getenv('POSTGRES_DB_USER')
+    POSTGRESQL_DB_PASSWORD = os.getenv('POSTGRES_DB_PASSWORD')
+    POSTGRESQL_DB_HOST = os.getenv('POSTGRES_DB_HOST')
 
     @property
     def postgres_db_path(self):
