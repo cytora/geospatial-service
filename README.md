@@ -1,2 +1,2 @@
-# geospatial-lambda
+# geospatial-service
 GeoSpatial Lambda functions
