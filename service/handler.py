@@ -19,8 +19,8 @@ import logging
 import os
 import time
 
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+#logger = logging.getLogger()
+#logger.setLevel(logging.DEBUG)
 
 
 class PostgresConfiguration():
@@ -51,7 +51,7 @@ def select_query_dict(connection, query, data=[]):
     """
     Run generic select query on db, returns a list of dictionaries
     """
-    logger.debug('Running query: {}'.format(query))
+    #logger.debug('Running query: {}'.format(query))
 
     # Open a cursor to perform database operations
     cursor = connection.cursor()
@@ -59,7 +59,7 @@ def select_query_dict(connection, query, data=[]):
 
     # execute the query
     try:
-        logger.info('Running query.')
+        #logger.info('Running query.')
         if len(data):
             cursor.execute(query, data)
         else:
@@ -270,5 +270,5 @@ def run():
 
 if __name__ == '__main__':
     print("building ...")
-    #if os.environ.get('local'):
-    #    run()
+    if os.environ.get('local'):
+        run()
