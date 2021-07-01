@@ -1,0 +1,1214 @@
+
+resource_types:
+  - name: slack-notification
+    type: docker-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: latest
+  - name: gcs-resource
+    type: docker-image
+    source:
+      repository: frodenas/gcs-resource
+resources:
+  - name: concourse-bi-integration
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/concourse-files
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: component-tests
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/((SERVICE))-component-tests
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: platform-helm
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/helm
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: terraform-runtime
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/terraform-runtime
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: cloudformation-templates
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/cloudformation-templates
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: acceptance-tests
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/acceptance-tests-mocha
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: runscope-cli
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/runscope-cli
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: register-dns
+    type: docker-image
+    source:
+      repository: eu.gcr.io/core-platform-1/register-dns
+      tag: latest
+      username: _json_key
+      password: ((GCS_AUTH_JSON_cytora-platform))
+  - name: slack-alert-cytora-dev
+    type: slack-notification
+    source:
+        url: https://hooks.slack.com/services/((SLACK_ID-cytora-dev))
+  - name: cluster-version-cytora-dev
+    type: gcs-resource
+    source:
+      bucket: cytora-service-versions
+      json_key: ((GCS_AUTH_JSON_cytora-platform))
+      regexp: cluster-versions/cytora-dev-(.*).tgz
+  - name: slack-alert-cytora-prod
+    type: slack-notification
+    source:
+        url: https://hooks.slack.com/services/((SLACK_ID-cytora-prod))
+  - name: cluster-version-cytora-prod
+    type: gcs-resource
+    source:
+      bucket: cytora-service-versions
+      json_key: ((GCS_AUTH_JSON_cytora-platform))
+      regexp: cluster-versions/cytora-prod-(.*).tgz
+  - name: service-version
+    type: gcs-resource
+    source:
+      bucket: cytora-service-versions
+      json_key: ((GCS_AUTH_JSON_cytora-platform))
+      regexp: ((SERVICE))/((SERVICE))-0.0.(.*).tgz
+  - name: deploy-scripts
+    type: gcs-resource
+    source:
+      bucket: cytora-core-platform
+      json_key: ((GCS_AUTH_JSON_cytora-platform))
+      regexp: deploy-script-builds/deploy-scripts-(.*).tar
+jobs:
+- name: start-deploy-cytora-dev
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: start-deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+  on_failure:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: start-deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: deploy-scripts
+            params:
+              unpack: true
+          - get: service-version
+            trigger: true
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - task: publish-bi-metrics
+            image: concourse-bi-integration
+            file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+            params:
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+              PROJECT_ID: core-platform-1
+              STEP_NAME: start-deploy
+              SERVICE: ((SERVICE))
+              ENV: cytora-dev
+              SUCCEEDED: true
+              STEP_FLAG: START
+          - put: slack-alert-cytora-dev
+            params:
+              text_file: service-version/version
+              text: |
+                  :mantelpiece_clock: Deploying ((SERVICE)) version $TEXT_FILE_CONTENT on cytora-dev
+- name: create-topic-bi-cytora-dev
+  serial: true
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: terraform-runtime
+          - get: service-version
+            params:
+              unpack: true
+            trigger: true
+            passed: [start-deploy-cytora-dev]
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: create-topic-cytora-dev
+        image: terraform-runtime
+        file: deploy-scripts/terraform-resources/tasks/create-pubsub-topic.yml
+        params:
+          ENV: cytora-dev
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+          SERVICE: ((SERVICE))
+          TOPIC_NAME: bi
+- name: deploy-canary-cytora-dev
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy-canary
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - put: slack-alert-cytora-dev
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed canary deployment for *((SERVICE))*:$TEXT_FILE_CONTENT in cytora-dev :(
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: deploy-canary
+            SERVICE: ((SERVICE))
+            ENV: cytora-dev
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: register-dns
+          - get: platform-helm
+          - get: cloudformation-templates
+          - get: service-version
+            trigger: true
+            passed: [start-deploy-cytora-dev]
+            params:
+              unpack: true
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy-canary
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+          STEP_FLAG: START
+      - task: deploy-helm-chart-cytora-dev
+        image: platform-helm
+        file: deploy-scripts/concourse-ci/tasks/deploy-chart.yml
+        params:
+          ADMIN_TOKEN: ((TOKEN_cytora-dev))
+          AUTH_KEY: ((authKey-cytora-dev))
+          AWS_ACCOUNT_ID: ((AWS_ACCOUNT_ID_cytora-dev))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+          ENV: cytora-dev
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+          SERVICE: ((SERVICE))
+          TEST: true
+          VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-dev))
+          VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-dev))
+          MEMORY: 128
+          CPU: 33
+        on_failure:
+          do:
+            - task: purge-helm-chart-cytora-dev
+              image: platform-helm
+              file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+              params:
+                ENV: cytora-dev
+                SERVICE: ((SERVICE))
+                GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+                CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+                CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+                ADMIN_TOKEN: ((TOKEN_cytora-dev))
+                PROJECT_ID: ((PROJECT_ID_cytora-dev))
+      - task: register-dns
+        attempts: 60
+        image: register-dns
+        file:  deploy-scripts/concourse-ci/tasks/register-dns.yml
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))-test
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+          ADMIN_TOKEN: ((TOKEN_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+          TEST: true
+      - task: create-route-53-record
+        image: cloudformation-templates
+        attempts: 60
+        file: deploy-scripts/cloudformation-resources/tasks/create-dns-record.yml
+        params:
+          CONCOURSE_VAULT_ROLE_ID: ((CONCOURSE_VAULT_ROLE_ID_cytora-dev))
+          CONCOURSE_VAULT_SECRET_ID: ((CONCOURSE_VAULT_SECRET_ID_cytora-dev))
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))-test
+          TEST: true
+          RECORD_TYPE: A
+      - task: service-healthcheck
+        file:  deploy-scripts/concourse-ci/tasks/healthcheck.yml
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))-test
+- name: purge-canary-cytora-dev
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: service-version
+            passed: [start-deploy-cytora-dev]
+            params:
+              unpack: true
+          - get: platform-helm
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: purge-helm-chart-cytora-dev
+        image: platform-helm
+        file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+          ADMIN_TOKEN: ((TOKEN_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+- name: component-tests-cytora-dev
+  serial: true
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: component-tests
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+      - put: slack-alert-cytora-dev
+        params:
+          text_file: service-version/version
+          text: |
+            :white_check_mark: Passed component tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-dev :tada: :confetti_ball:
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: component-tests
+            SERVICE: ((SERVICE))
+            ENV: cytora-dev
+            SUCCEEDED: false
+        - put: slack-alert-cytora-dev
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed component tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-dev :matt-disapproves:
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: component-tests
+          - get: cluster-version-cytora-dev
+          - get: service-version
+            trigger: true
+            params:
+              unpack: true
+            passed: [deploy-canary-cytora-dev,create-topic-bi-cytora-dev]
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - task: publish-bi-metrics
+      image: concourse-bi-integration
+      file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+      params:
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+        PROJECT_ID: core-platform-1
+        STEP_NAME: component-tests
+        SERVICE: ((SERVICE))
+        ENV: cytora-dev
+        SUCCEEDED: true
+        STEP_FLAG: START
+    - task: component-tests
+      file:  deploy-scripts/concourse-ci/tasks/run-component-tests.yml
+      input_mapping:
+        cluster-version: cluster-version-cytora-dev
+      image: component-tests
+      params:
+        ADMIN_TOKEN: ((TOKEN_cytora-dev))
+        AUTH_KEY: ((authKey-cytora-dev))
+        CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+        CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+        ENV: cytora-dev
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+        PROJECT_ID: ((PROJECT_ID_cytora-dev))
+        SERVICE: ((SERVICE))
+        VAULT_ADDR: http://127.0.0.1:8200
+        VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-dev))
+        VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-dev))
+- name: deploy-cytora-dev
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+  on_failure:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: false
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: platform-helm
+          - get: cloudformation-templates
+          - get: register-dns
+          - get: cluster-version-cytora-dev
+            trigger: true
+          - get: runscope-cli
+          - get: service-version
+            trigger: true
+            passed: [component-tests-cytora-dev]
+            params:
+              unpack: true
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - in_parallel:
+          fail_fast: true
+          steps:
+            - task: publish-bi-metrics
+              image: concourse-bi-integration
+              file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+              params:
+                GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+                PROJECT_ID: core-platform-1
+                STEP_NAME: deploy
+                SERVICE: ((SERVICE))
+                ENV: cytora-dev
+                SUCCEEDED: true
+                STEP_FLAG: START
+      - task: deploy-helm-chart-cytora-dev
+        image: platform-helm
+        input_mapping:
+          cluster-version: cluster-version-cytora-dev
+        file: deploy-scripts/concourse-ci/tasks/deploy-chart.yml
+        params:
+          ADMIN_TOKEN: ((TOKEN_cytora-dev))
+          AUTH_KEY: ((authKey-cytora-dev))
+          AWS_ACCOUNT_ID: ((AWS_ACCOUNT_ID_cytora-dev))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+          ENV: cytora-dev
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+          SERVICE: ((SERVICE))
+          VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-dev))
+          VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-dev))
+          MEMORY: 128
+          CPU: 33
+          REPLICAS: 3
+      - task: register-dns
+        image: register-dns
+        attempts: 60
+        file:  deploy-scripts/concourse-ci/tasks/register-dns.yml
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+          ADMIN_TOKEN: ((TOKEN_cytora-dev))
+          PROJECT_ID: ((PROJECT_ID_cytora-dev))
+      - task: create-route-53-record
+        image: cloudformation-templates
+        attempts: 60
+        file: deploy-scripts/cloudformation-resources/tasks/create-dns-record.yml
+        params:
+          CONCOURSE_VAULT_ROLE_ID: ((CONCOURSE_VAULT_ROLE_ID_cytora-dev))
+          CONCOURSE_VAULT_SECRET_ID: ((CONCOURSE_VAULT_SECRET_ID_cytora-dev))
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))
+          RECORD_TYPE: A
+      - task: service-healthcheck
+        file:  deploy-scripts/concourse-ci/tasks/healthcheck.yml
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))
+      - task: create-healthcheck-schedule
+        file:  deploy-scripts/concourse-ci/tasks/create-healthcheck-schedule.yml
+        image: runscope-cli
+        params:
+          ENV: cytora-dev
+          SERVICE: ((SERVICE))
+          BUCKET_ID: ((BUCKET_ID_cytora-platform))
+          RUNSCOPE_TOKEN: ((RUNSCOPE_TOKEN_cytora-platform))
+- name: acceptance-tests-cytora-dev
+  serial: true
+  on_success:
+    do:
+      - put: slack-alert-cytora-dev
+        params:
+          text_file: service-version/version
+          text: |
+            :white_check_mark: Passed acceptance tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-dev :excited_jose:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: acceptance-tests
+          SERVICE: ((SERVICE))
+          ENV: cytora-dev
+          SUCCEEDED: true
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - put: slack-alert-cytora-dev
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed acceptance tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-dev :matt-disapproves:
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: acceptance-tests
+            SERVICE: ((SERVICE))
+            ENV: cytora-dev
+            SUCCEEDED: false
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: service-version
+            trigger: true
+            passed: [deploy-cytora-dev]
+          - get: acceptance-tests
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - task: publish-bi-metrics
+      image: concourse-bi-integration
+      file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+      params:
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+        PROJECT_ID: core-platform-1
+        STEP_NAME: acceptance-tests
+        SERVICE: ((SERVICE))
+        ENV: cytora-dev
+        SUCCEEDED: true
+        STEP_FLAG: START
+    - task: acceptance-tests
+      image: acceptance-tests
+      file:  deploy-scripts/concourse-ci/tasks/acceptance-tests.yml
+      timeout: 10m
+      params:
+        API_KEY_ACCESS: ((api-key-access-cytora-dev))
+        API_KEY_NO_ACCESS: ((api-key-no-access-cytora-dev))
+        API_KEY_UNAUTHORISED_ENDPOINTS: ((api-key-unauthorised-endpoints-cytora-dev))
+        AUTH0_TOKEN: ((AUTH0_PASS_cytora-dev))
+        CP_AUTH_KEY: ((authKey-cytora-dev))
+        ENV: cytora-dev
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+        PROJECT_ID: ((PROJECT_ID_cytora-dev))
+        SERVICE: ((SERVICE))
+- name: finish-deploy-cytora-dev
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: platform-helm
+          - get: deploy-scripts
+            params:
+              unpack: true
+          - get: service-version
+            trigger: true
+            params:
+              unpack: true
+            passed: [acceptance-tests-cytora-dev]
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - put: slack-alert-cytora-dev
+            params:
+              text_file: service-version/version
+              text: |
+                  :white_check_mark: Finished deploying ((SERVICE)) version $TEXT_FILE_CONTENT on cytora-dev :tada: :confetti_ball: :excited_jose:
+          - task: publish-bi-metrics
+            image: concourse-bi-integration
+            file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+            params:
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+              PROJECT_ID: core-platform-1
+              STEP_NAME: finish-deploy
+              SERVICE: ((SERVICE))
+              ENV: cytora-dev
+              SUCCEEDED: true
+          - task: purge-helm-chart-cytora-dev
+            image: platform-helm
+            file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+            params:
+              ENV: cytora-dev
+              SERVICE: ((SERVICE))
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-dev))
+              CLUSTER_CA: ((CLUSTER_CA_cytora-dev))
+              CLUSTER_URL: https://((CLUSTER_HOST_cytora-dev))
+              ADMIN_TOKEN: ((TOKEN_cytora-dev))
+              PROJECT_ID: ((PROJECT_ID_cytora-dev))
+- name: start-deploy-cytora-prod
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: start-deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+  on_failure:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: start-deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: deploy-scripts
+            params:
+              unpack: true
+          - get: service-version
+            trigger: false
+            passed: [acceptance-tests-cytora-dev]
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - task: publish-bi-metrics
+            image: concourse-bi-integration
+            file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+            params:
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+              PROJECT_ID: core-platform-1
+              STEP_NAME: start-deploy
+              SERVICE: ((SERVICE))
+              ENV: cytora-prod
+              SUCCEEDED: true
+              STEP_FLAG: START
+          - put: slack-alert-cytora-prod
+            params:
+              text_file: service-version/version
+              text: |
+                  :mantelpiece_clock: Deploying ((SERVICE)) version $TEXT_FILE_CONTENT on cytora-prod
+- name: create-topic-bi-cytora-prod
+  serial: true
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: terraform-runtime
+          - get: service-version
+            params:
+              unpack: true
+            trigger: true
+            passed: [start-deploy-cytora-prod]
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: create-topic-cytora-prod
+        image: terraform-runtime
+        file: deploy-scripts/terraform-resources/tasks/create-pubsub-topic.yml
+        params:
+          ENV: cytora-prod
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+          SERVICE: ((SERVICE))
+          TOPIC_NAME: bi
+- name: deploy-canary-cytora-prod
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy-canary
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - put: slack-alert-cytora-prod
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed canary deployment for *((SERVICE))*:$TEXT_FILE_CONTENT in cytora-prod :(
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: deploy-canary
+            SERVICE: ((SERVICE))
+            ENV: cytora-prod
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: register-dns
+          - get: platform-helm
+          - get: cloudformation-templates
+          - get: service-version
+            trigger: true
+            passed: [start-deploy-cytora-prod]
+            params:
+              unpack: true
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy-canary
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+          STEP_FLAG: START
+      - task: deploy-helm-chart-cytora-prod
+        image: platform-helm
+        file: deploy-scripts/concourse-ci/tasks/deploy-chart.yml
+        params:
+          ADMIN_TOKEN: ((TOKEN_cytora-prod))
+          AUTH_KEY: ((authKey-cytora-prod))
+          AWS_ACCOUNT_ID: ((AWS_ACCOUNT_ID_cytora-prod))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+          ENV: cytora-prod
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+          SERVICE: ((SERVICE))
+          TEST: true
+          VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-prod))
+          VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-prod))
+          MEMORY: 128
+          CPU: 33
+        on_failure:
+          do:
+            - task: purge-helm-chart-cytora-prod
+              image: platform-helm
+              file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+              params:
+                ENV: cytora-prod
+                SERVICE: ((SERVICE))
+                GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+                CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+                CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+                ADMIN_TOKEN: ((TOKEN_cytora-prod))
+                PROJECT_ID: ((PROJECT_ID_cytora-prod))
+      - task: register-dns
+        attempts: 60
+        image: register-dns
+        file:  deploy-scripts/concourse-ci/tasks/register-dns.yml
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))-test
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+          ADMIN_TOKEN: ((TOKEN_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+          TEST: true
+      - task: create-route-53-record
+        image: cloudformation-templates
+        attempts: 60
+        file: deploy-scripts/cloudformation-resources/tasks/create-dns-record.yml
+        params:
+          CONCOURSE_VAULT_ROLE_ID: ((CONCOURSE_VAULT_ROLE_ID_cytora-prod))
+          CONCOURSE_VAULT_SECRET_ID: ((CONCOURSE_VAULT_SECRET_ID_cytora-prod))
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))-test
+          TEST: true
+          RECORD_TYPE: A
+      - task: service-healthcheck
+        file:  deploy-scripts/concourse-ci/tasks/healthcheck.yml
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))-test
+- name: purge-canary-cytora-prod
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: service-version
+            passed: [start-deploy-cytora-prod]
+            params:
+              unpack: true
+          - get: platform-helm
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - task: purge-helm-chart-cytora-prod
+        image: platform-helm
+        file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+          ADMIN_TOKEN: ((TOKEN_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+- name: component-tests-cytora-prod
+  serial: true
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: component-tests
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+      - put: slack-alert-cytora-prod
+        params:
+          text_file: service-version/version
+          text: |
+            :white_check_mark: Passed component tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-prod :tada: :confetti_ball:
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: component-tests
+            SERVICE: ((SERVICE))
+            ENV: cytora-prod
+            SUCCEEDED: false
+        - put: slack-alert-cytora-prod
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed component tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-prod :matt-disapproves:
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: component-tests
+          - get: cluster-version-cytora-prod
+          - get: service-version
+            trigger: true
+            params:
+              unpack: true
+            passed: [deploy-canary-cytora-prod,create-topic-bi-cytora-prod]
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - task: publish-bi-metrics
+      image: concourse-bi-integration
+      file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+      params:
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+        PROJECT_ID: core-platform-1
+        STEP_NAME: component-tests
+        SERVICE: ((SERVICE))
+        ENV: cytora-prod
+        SUCCEEDED: true
+        STEP_FLAG: START
+    - task: component-tests
+      file:  deploy-scripts/concourse-ci/tasks/run-component-tests.yml
+      input_mapping:
+        cluster-version: cluster-version-cytora-prod
+      image: component-tests
+      params:
+        ADMIN_TOKEN: ((TOKEN_cytora-prod))
+        AUTH_KEY: ((authKey-cytora-prod))
+        CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+        CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+        ENV: cytora-prod
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+        PROJECT_ID: ((PROJECT_ID_cytora-prod))
+        SERVICE: ((SERVICE))
+        VAULT_ADDR: http://127.0.0.1:8200
+        VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-prod))
+        VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-prod))
+- name: deploy-cytora-prod
+  on_success:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+  on_failure:
+    do:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: deploy
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: false
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: platform-helm
+          - get: cloudformation-templates
+          - get: register-dns
+          - get: cluster-version-cytora-prod
+            trigger: true
+          - get: runscope-cli
+          - get: service-version
+            trigger: true
+            passed: [component-tests-cytora-prod]
+            params:
+              unpack: true
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - do:
+      - in_parallel:
+          fail_fast: true
+          steps:
+            - task: publish-bi-metrics
+              image: concourse-bi-integration
+              file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+              params:
+                GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+                PROJECT_ID: core-platform-1
+                STEP_NAME: deploy
+                SERVICE: ((SERVICE))
+                ENV: cytora-prod
+                SUCCEEDED: true
+                STEP_FLAG: START
+      - task: deploy-helm-chart-cytora-prod
+        image: platform-helm
+        input_mapping:
+          cluster-version: cluster-version-cytora-prod
+        file: deploy-scripts/concourse-ci/tasks/deploy-chart.yml
+        params:
+          ADMIN_TOKEN: ((TOKEN_cytora-prod))
+          AUTH_KEY: ((authKey-cytora-prod))
+          AWS_ACCOUNT_ID: ((AWS_ACCOUNT_ID_cytora-prod))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+          ENV: cytora-prod
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+          SERVICE: ((SERVICE))
+          VAULT_ROLE_ID: ((VAULT_ROLE_ID_cytora-prod))
+          VAULT_SECRET_ID: ((VAULT_SECRET_ID_cytora-prod))
+          MEMORY: 128
+          CPU: 33
+          REPLICAS: 3
+      - task: register-dns
+        image: register-dns
+        attempts: 60
+        file:  deploy-scripts/concourse-ci/tasks/register-dns.yml
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+          CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+          CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+          ADMIN_TOKEN: ((TOKEN_cytora-prod))
+          PROJECT_ID: ((PROJECT_ID_cytora-prod))
+      - task: create-route-53-record
+        image: cloudformation-templates
+        attempts: 60
+        file: deploy-scripts/cloudformation-resources/tasks/create-dns-record.yml
+        params:
+          CONCOURSE_VAULT_ROLE_ID: ((CONCOURSE_VAULT_ROLE_ID_cytora-prod))
+          CONCOURSE_VAULT_SECRET_ID: ((CONCOURSE_VAULT_SECRET_ID_cytora-prod))
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))
+          RECORD_TYPE: A
+      - task: service-healthcheck
+        file:  deploy-scripts/concourse-ci/tasks/healthcheck.yml
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))
+      - task: create-healthcheck-schedule
+        file:  deploy-scripts/concourse-ci/tasks/create-healthcheck-schedule.yml
+        image: runscope-cli
+        params:
+          ENV: cytora-prod
+          SERVICE: ((SERVICE))
+          BUCKET_ID: ((BUCKET_ID_cytora-platform))
+          RUNSCOPE_TOKEN: ((RUNSCOPE_TOKEN_cytora-platform))
+- name: acceptance-tests-cytora-prod
+  serial: true
+  on_success:
+    do:
+      - put: slack-alert-cytora-prod
+        params:
+          text_file: service-version/version
+          text: |
+            :white_check_mark: Passed acceptance tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-prod :excited_jose:
+      - task: publish-bi-metrics
+        image: concourse-bi-integration
+        file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+        params:
+          GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+          PROJECT_ID: core-platform-1
+          STEP_NAME: acceptance-tests
+          SERVICE: ((SERVICE))
+          ENV: cytora-prod
+          SUCCEEDED: true
+  on_failure:
+    in_parallel:
+      fail_fast: true
+      steps:
+        - put: slack-alert-cytora-prod
+          params:
+            text_file: service-version/version
+            text: |
+              :X: Failed acceptance tests for *((SERVICE))*:$TEXT_FILE_CONTENT on cytora-prod :matt-disapproves:
+        - task: publish-bi-metrics
+          image: concourse-bi-integration
+          file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+          params:
+            GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+            PROJECT_ID: core-platform-1
+            STEP_NAME: acceptance-tests
+            SERVICE: ((SERVICE))
+            ENV: cytora-prod
+            SUCCEEDED: false
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: service-version
+            trigger: true
+            passed: [deploy-cytora-prod]
+          - get: acceptance-tests
+          - get: deploy-scripts
+            params:
+              unpack: true
+    - task: publish-bi-metrics
+      image: concourse-bi-integration
+      file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+      params:
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+        PROJECT_ID: core-platform-1
+        STEP_NAME: acceptance-tests
+        SERVICE: ((SERVICE))
+        ENV: cytora-prod
+        SUCCEEDED: true
+        STEP_FLAG: START
+    - task: acceptance-tests
+      image: acceptance-tests
+      file:  deploy-scripts/concourse-ci/tasks/acceptance-tests.yml
+      timeout: 10m
+      params:
+        API_KEY_ACCESS: ((api-key-access-cytora-prod))
+        API_KEY_NO_ACCESS: ((api-key-no-access-cytora-prod))
+        API_KEY_UNAUTHORISED_ENDPOINTS: ((api-key-unauthorised-endpoints-cytora-prod))
+        AUTH0_TOKEN: ((AUTH0_PASS_cytora-prod))
+        CP_AUTH_KEY: ((authKey-cytora-prod))
+        ENV: cytora-prod
+        GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+        PROJECT_ID: ((PROJECT_ID_cytora-prod))
+        SERVICE: ((SERVICE))
+- name: finish-deploy-cytora-prod
+  plan:
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - get: concourse-bi-integration
+          - get: platform-helm
+          - get: deploy-scripts
+            params:
+              unpack: true
+          - get: service-version
+            trigger: true
+            params:
+              unpack: true
+            passed: [acceptance-tests-cytora-prod]
+    - in_parallel:
+        fail_fast: true
+        steps:
+          - put: slack-alert-cytora-prod
+            params:
+              text_file: service-version/version
+              text: |
+                  :white_check_mark: Finished deploying ((SERVICE)) version $TEXT_FILE_CONTENT on cytora-prod :tada: :confetti_ball: :excited_jose:
+          - task: publish-bi-metrics
+            image: concourse-bi-integration
+            file: deploy-scripts/concourse-ci/tasks/publish-bi-metrics.yml
+            params:
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-platform))
+              PROJECT_ID: core-platform-1
+              STEP_NAME: finish-deploy
+              SERVICE: ((SERVICE))
+              ENV: cytora-prod
+              SUCCEEDED: true
+          - task: purge-helm-chart-cytora-prod
+            image: platform-helm
+            file:  deploy-scripts/concourse-ci/tasks/purge-chart.yml
+            params:
+              ENV: cytora-prod
+              SERVICE: ((SERVICE))
+              GCS_AUTH_JSON: ((GCS_AUTH_JSON_cytora-prod))
+              CLUSTER_CA: ((CLUSTER_CA_cytora-prod))
+              CLUSTER_URL: https://((CLUSTER_HOST_cytora-prod))
+              ADMIN_TOKEN: ((TOKEN_cytora-prod))
+              PROJECT_ID: ((PROJECT_ID_cytora-prod))
+groups:
+    - name: ((SERVICE))
+      jobs:
+        - start-deploy-cytora-dev
+        - create-topic-bi-cytora-dev
+        - deploy-canary-cytora-dev
+        - purge-canary-cytora-dev
+        - component-tests-cytora-dev
+        - deploy-cytora-dev
+        - acceptance-tests-cytora-dev
+        - finish-deploy-cytora-dev
+        - start-deploy-cytora-prod
+        - create-topic-bi-cytora-prod
+        - deploy-canary-cytora-prod
+        - purge-canary-cytora-prod
+        - component-tests-cytora-prod
+        - deploy-cytora-prod
+        - acceptance-tests-cytora-prod
+        - finish-deploy-cytora-prod
+    - name: cytora-dev
+      jobs:
+        - start-deploy-cytora-dev
+        - create-topic-bi-cytora-dev
+        - deploy-canary-cytora-dev
+        - purge-canary-cytora-dev
+        - component-tests-cytora-dev
+        - deploy-cytora-dev
+        - acceptance-tests-cytora-dev
+        - finish-deploy-cytora-dev
+    - name: cytora-prod
+      jobs:
+        - start-deploy-cytora-prod
+        - create-topic-bi-cytora-prod
+        - deploy-canary-cytora-prod
+        - purge-canary-cytora-prod
+        - component-tests-cytora-prod
+        - deploy-cytora-prod
+        - acceptance-tests-cytora-prod
+        - finish-deploy-cytora-prod
+

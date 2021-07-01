@@ -1,0 +1,12 @@
+spec:
+  topics:
+    - name: bi
+  environments:
+    - name: cytora-dev
+      trigger: true
+    - name: cytora-prod
+      dependsOn: cytora-dev
+  resources:
+    mem: 128
+    cpu: 33
+    replicas: 3
