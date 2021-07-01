@@ -22,6 +22,9 @@ import logging
 import os
 import time
 
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
 
 class PostgresConfiguration():
     POSTGRESQL_DB_PORT = os.getenv('POSTGRES_PORT', 5432)
@@ -85,6 +88,10 @@ def select_query_dict(connection, query, data=[]):
     return results
 
 
+def to_json(obj) -> Dict[str, Any]:
+    return json(obj)
+
+
 # new sanic framework requirements -> provide name as prop to the create_sanic_app class/function
 #app = create_sanic_app(name='universal_resolver')
 app = create_sanic_app()
@@ -96,7 +103,7 @@ threshold_default = conf.get_value('threshold', None)
 
 
 @app.route(f'/{version}/discovery/layers', methods=['GET'])
-async def get_discovery():
+async def get_discovery(request: Request) -> Dict[str, Any]:
     '''
     purpose: function discover available GeoSpatial Layers/Tables for query/search.
     get all tables with GEOM column in public Schema and respond back with object as follows:
@@ -125,6 +132,8 @@ async def get_discovery():
     COUNT presents number of objects/rows in given table/layer
     '''
 
+    log: Log = request.get('log')
+
     sql = '''
         select
             table_name as gis_layer
@@ -136,40 +145,52 @@ async def get_discovery():
             ordinal_position;
     '''
     start = time.perf_counter()
-    with PostgresConfiguration().pg2 as con:
-        res = select_query_dict(con, sql)
-
-    for el in res:
-        print(el)
+    try:
         with PostgresConfiguration().pg2 as con:
-            cur = con.cursor()
+            res = select_query_dict(con, sql)
 
-            srid = f'''SELECT Find_SRID('public', '{el['gis_layer']}', 'geom');'''
-            cur.execute(srid)
-            srd = cur.fetchall()
+        for el in res:
+            print(el)
+            with PostgresConfiguration().pg2 as con:
+                cur = con.cursor()
 
-            #count = f'''SELECT count(1) from {el['gis_layer']};'''
-            #cur.execute(count)
-            #cnt = cur.fetchall()
+                srid = f'''SELECT Find_SRID('public', '{el['gis_layer']}', 'geom');'''
+                cur.execute(srid)
+                srd = cur.fetchall()
 
-            geom_type = f'''SELECT count(1), ST_GeometryType(geom) as geom_type
-                from {el['gis_layer']}
-                group by ST_GeometryType(geom);'''
-            geom_typ = select_query_dict(con, geom_type)
+                #count = f'''SELECT count(1) from {el['gis_layer']};'''
+                #cur.execute(count)
+                #cnt = cur.fetchall()
 
-            ext_sql = f'''SELECT ST_AsGeoJSON(ST_Extent(geom)) as extent FROM {el['gis_layer']};'''
-            ext = select_query_dict(con, ext_sql)
+                geom_type = f'''SELECT count(1), ST_GeometryType(geom) as geom_type
+                    from {el['gis_layer']}
+                    group by ST_GeometryType(geom);'''
+                geom_typ = select_query_dict(con, geom_type)
 
-            el['srid'] = srd[0][0]
-            # el['count'] = cnt[0][0]
-            el['geometry'] = geom_typ[0]
-            d = ast.literal_eval(ext[0]['extent'])
-            el['extent'] = d
+                ext_sql = f'''SELECT ST_AsGeoJSON(ST_Extent(geom)) as extent FROM {el['gis_layer']};'''
+                ext = select_query_dict(con, ext_sql)
 
-    obj = {}
-    obj['layers'] = res
-    obj['exec_time_seconds'] = f'{time.perf_counter() - start}'
-    return obj
+                el['srid'] = srd[0][0]
+                # el['count'] = cnt[0][0]
+                el['geometry'] = geom_typ[0]
+                d = ast.literal_eval(ext[0]['extent'])
+                el['extent'] = d
+
+        return_payload = {
+            'layers': res,
+            'exec_time_seconds': f'{time.perf_counter() - start}'
+        }
+
+    except Exception as e:
+        log.error("error matching address", error=e)
+        print(e)
+        raise e
+    finally:
+        log.info(f'final messages here')
+        #bi_message = generate_bi_message(body, response, log=log)
+        #bi.publish(bi_message, trace_id=log.trace_id, is_test=headers_is_test(request.headers))
+
+    return return_payload
 
 
 @app.route(f'/{version}/intersect', methods=['GET'])
@@ -211,74 +232,23 @@ async def get_intersect(request: Request) -> Dict[str, Any]:
     WHERE ST_Intersects(geom, 'SRID=4326;POINT({longitude} {latitude})');
     '''
     start = time.perf_counter()
-    with PostgresConfiguration().pg2 as con:
-        res = select_query_dict(con, sql)
-
-    #geometry = None
-    for el in res:
-        #geometry = el['g']
-        del el['geom']
-        #del el['g']
-
-    obj = {}
-    obj['request'] = {'lat': latitude, 'lon': longitude, 'layer': layer}
-    obj['response'] = res
-    #obj['response'].append(ast.literal_eval(geometry))
-    obj['exec_time_seconds'] = f'{time.perf_counter() - start}'
-    return obj
-
-
-
-
-@app.route(f'/{version}/universal-resolver', methods=['GET'])
-async def universal_resolve(request: Request) -> Dict[str, Any]:
-    """Resolve endpoint"""
-    log: Log = request.get('log')
-    query = request.args.get('query')
-    min_confidence = request.args.get('min_confidence', 0.9)
-    max_number_returns = request.args.get('max_number_returns', 1)
-    caller_uid = request.args.get('caller_uid', 'UWP_Caller')
-    client_query_id = request.args.get('client_query_id')
-
-    input_query = Query(
-        query=query,
-        min_confidence=float(min_confidence),
-        max_number_returns=int(max_number_returns),
-        caller_uid=caller_uid,
-        client_query_id=client_query_id,
-    )
-    start = time.perf_counter()
-
-    # match
-    return_payload = None
     try:
-        import cProfile
-        from pstats import Stats, SortKey
+        with PostgresConfiguration().pg2 as con:
+            res = select_query_dict(con, sql)
 
-        do_profiling = False
-        if do_profiling:
-            with cProfile.Profile() as pr:
-                matches = matcher.search(input_query)
-            now = datetime.now().strftime("%Y%m%d_%H%M%S")
-            with open(f'profiling_stats_{now}.txt', 'w') as stream:
-                stats = Stats(pr, stream=stream)
-                stats.strip_dirs()
-                stats.sort_stats('time')
-                stats.dump_stats('.prof_stats')
-                stats.print_stats()
-        else:
-            matches = matcher.search(input_query)
-
-        request = format_request_payload(input_query)
-        if matches:
-            response = format_response_payload(matches)
-        else:
-            response = []
+        #geometry = None
+        for el in res:
+            #geometry = el['g']
+            del el['geom']
+            #del el['g']
 
         return_payload = {
-            'request': request,
-            'response': response,
-            'exec_time': f'{time.perf_counter() - start} seconds'
+            'request': {
+                'lat': latitude,
+                'lon': longitude,
+                'layer': layer},
+            'response': res,
+            'exec_time_seconds': f'{time.perf_counter() - start}'
         }
 
     except Exception as e:
@@ -290,12 +260,7 @@ async def universal_resolve(request: Request) -> Dict[str, Any]:
         #bi_message = generate_bi_message(body, response, log=log)
         #bi.publish(bi_message, trace_id=log.trace_id, is_test=headers_is_test(request.headers))
 
-    # result
-    return to_json(return_payload)
-
-
-def to_json(obj) -> Dict[str, Any]:
-    return json(obj)
+    return return_payload
 
 
 # main
@@ -309,10 +274,3 @@ if __name__ == '__main__':
     if os.environ.get('local'):
         run()
 
-
-
-#----------
-
-
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
