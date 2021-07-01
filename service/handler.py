@@ -9,7 +9,6 @@ from datetime import datetime
 from py_platform_utils.config import Config
 from py_platform_utils.logging import Log
 from py_platform_utils.server.sanic_app import create_sanic_app
-# from sanic import Sanic
 from sanic.request import Request
 from sanic.response import json
 
@@ -27,11 +26,11 @@ logger.setLevel(logging.DEBUG)
 
 
 class PostgresConfiguration():
-    POSTGRESQL_DB_PORT = os.getenv('POSTGRES_PORT', 5432)
-    POSTGRESQL_DB_NAME = os.getenv('POSTGRES_DB', 'cytora_data_rds')
-    POSTGRESQL_DB_USER = os.getenv('POSTGRES_USER', 'geo')
-    POSTGRESQL_DB_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'TGL2022!!')
-    POSTGRESQL_DB_HOST = os.getenv('POSTGRES_ADDRESS', 'dev-postgres-11.c5xohzyav5el.eu-west-1.rds.amazonaws.com')
+    POSTGRESQL_DB_PORT = os.getenv('POSTGRES_PORT')
+    POSTGRESQL_DB_NAME = os.getenv('POSTGRES_DB')
+    POSTGRESQL_DB_USER = os.getenv('POSTGRES_USER')
+    POSTGRESQL_DB_PASSWORD = os.getenv('POSTGRES_PASSWORD')
+    POSTGRESQL_DB_HOST = os.getenv('POSTGRES_ADDRESS')
 
     @property
     def postgres_db_path(self):
