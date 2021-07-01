@@ -32,7 +32,7 @@ WORKDIR /opt/
 
 
 COPY service service
-# COPY configs configs
+COPY configs configs
 COPY setup.py setup.py
 # COPY models models
 # COPY generated generated
