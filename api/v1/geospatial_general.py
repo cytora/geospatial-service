@@ -150,9 +150,7 @@ async def get_discovery():
             d = ast.literal_eval(ext[0]['extent'])
             el['extent'] = d
 
-    obj = {}
-    obj['layers'] = res
-    obj['exec_time_seconds'] = f'{time.perf_counter() - start}'
+    obj = {'layers': res, 'exec_time_seconds': f'{time.perf_counter() - start}'}
     return obj
 
 
@@ -199,9 +197,13 @@ async def get_intersection(latitude: float, longitude: float, layer: str):
         del el['geom']
         #del el['g']
 
-    obj = {}
-    obj['request'] = {'lat': latitude, 'lon': longitude, 'layer': layer}
-    obj['response'] = res
+    obj = {
+        'request': {
+            'lat': latitude,
+            'lon': longitude,
+            'layer': layer},
+        'response': res,
+        'exec_time_seconds': f'{time.perf_counter() - start}'
+    }
     #obj['response'].append(ast.literal_eval(geometry))
-    obj['exec_time_seconds'] = f'{time.perf_counter() - start}'
     return obj
