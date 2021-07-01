@@ -270,6 +270,5 @@ def run():
 
 if __name__ == '__main__':
     print("building ...")
-    if os.environ.get('local'):
-        run()
-
+    #if os.environ.get('local'):
+    #    run()
